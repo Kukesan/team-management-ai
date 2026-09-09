@@ -22,6 +22,10 @@ class RequestContext:
     roles: list[str]
 
 
+def _parse_roles(x_user_roles: str) -> list[str]:
+    return [r.strip() for r in x_user_roles.split(",") if r.strip()]
+
+
 async def get_current_context(
     x_user_id: str = Header(...),
     x_user_name: str = Header(...),
@@ -31,7 +35,18 @@ async def get_current_context(
     check. Chat/summary are manager-facing per the assignment, so as defense in depth
     (not solely relying on AiController's [Authorize(Roles=...)]) this also rejects
     callers whose forwarded roles don't include Manager/Admin."""
-    roles = [r.strip() for r in x_user_roles.split(",") if r.strip()]
+    roles = _parse_roles(x_user_roles)
     if not ({"Manager", "Admin"} & set(roles)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager or Admin role required.")
     return RequestContext(user_id=x_user_id, user_name=x_user_name, roles=roles)
+
+
+async def get_any_role_context(
+    x_user_id: str = Header(...),
+    x_user_name: str = Header(...),
+    x_user_roles: str = Header(default=""),
+) -> RequestContext:
+    """Like get_current_context but for endpoints open to every authenticated role
+    (e.g. /help, which is static product how-to content, not real user/DB data --
+    there's no reason to restrict it to Manager/Admin)."""
+    return RequestContext(user_id=x_user_id, user_name=x_user_name, roles=_parse_roles(x_user_roles))

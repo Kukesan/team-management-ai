@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from app.core.logging import configure_logging
 from app.db.pool import close_pool, create_pool
 from app.dependencies import verify_internal_api_key
-from app.routers import chat, summary
+from app.routers import chat, help, summary
 
 
 @asynccontextmanager
@@ -24,6 +24,7 @@ app = FastAPI(title="team-management-ai", lifespan=lifespan)
 
 app.include_router(chat.router, dependencies=[Depends(verify_internal_api_key)])
 app.include_router(summary.router, dependencies=[Depends(verify_internal_api_key)])
+app.include_router(help.router, dependencies=[Depends(verify_internal_api_key)])
 
 
 @app.get("/health")

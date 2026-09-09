@@ -12,10 +12,13 @@ the request here with a shared internal secret.
 
 ## Scope
 
-Implements `POST /chat` (conversational Q&A) and `POST /summary` (AI-generated
-weekly summary: completed work, recurring blockers, workload notes). Does not
-implement document upload/RAG, persisted chat history, or the frontend chat
-widget — those are future work.
+Implements `POST /chat` (conversational Q&A over real report data, Manager/Admin
+only), `POST /summary` (AI-generated weekly summary: completed work, recurring
+blockers, workload notes, Manager/Admin only), and `POST /help` (a role-based
+"how do I..." product help assistant, open to every role, answered purely from
+the static markdown in `app/knowledge_base/` — it never touches the database).
+Does not implement document upload/RAG, persisted chat history, or the frontend
+chat widget itself — those are future work outside this repo.
 
 ## Prerequisites
 
@@ -81,11 +84,30 @@ services read/write the same database.
 - `/chat` and `/summary` are Manager/Admin-only (enforced both by
   `team-management-api`'s `[Authorize(Roles=...)]` and, as defense in depth, by
   this service rejecting any forwarded identity whose roles don't include
-  Manager/Admin).
+  Manager/Admin). `/help` is intentionally open to every authenticated role —
+  see below.
 - Only read (`SELECT`) queries are issued against the app database — see
-  `app/repositories/reports_repository.py`.
+  `app/repositories/reports_repository.py`. `/help` never queries the database
+  at all; it only reads local markdown files.
 - Report content sent to the OpenAI API is limited to what the manager's question
   actually needs (via tool calls), not a full data dump.
 - The Supabase service-role/database credentials and the OpenAI API key live
   only in this service's environment — never returned in a response, never
   logged, `.env` is gitignored.
+
+## Role-based help knowledge base (`/help`)
+
+`POST /help` answers "how do I..." product questions (e.g. "how do I create a
+project?") without touching the database or the OpenAI-tool-calling loop used by
+`/chat`. Content lives in `app/knowledge_base/`:
+
+- `common.md` — always included, for every role.
+- `team-member.md`, `manager.md`, `admin.md` — included only for callers whose
+  forwarded `X-User-Roles` contains that role, so e.g. an Employee is never shown
+  "how to create a project" and the model is told not to describe features
+  outside what's in the documentation it was given.
+
+To add or edit help content, just edit the relevant markdown file — no code
+changes needed. The files are cached in memory per-process (`app/services/
+knowledge_base.py`), so restart the service to pick up edits, same as `.env`
+changes.

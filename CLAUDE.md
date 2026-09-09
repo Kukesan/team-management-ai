@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FastAPI backend that gives an OpenAI model read-only tool access to the `team-management-api`
 Postgres database, to answer a manager's natural-language questions (`POST /chat`) and generate
-AI weekly summaries (`POST /summary`). It stores no data of its own and is **never called from
-the browser** — `team-management-api`'s `AiController` authenticates the real user (JWT,
-Manager/Admin only) and forwards the request here with a shared internal secret.
+AI weekly summaries (`POST /summary`). It also serves a role-based, DB-free product help
+assistant (`POST /help`) from static markdown, open to every role. It stores no data of its own
+and is **never called from the browser** — `team-management-api`'s `AiController` authenticates
+the real user (JWT) and forwards the request here with a shared internal secret; `/chat` and
+`/summary` require Manager/Admin, `/help` does not.
 
 ## Commands
 
@@ -37,10 +39,12 @@ README.md for the `GRANT SELECT` snippet) over reusing the app's migration crede
 1. `verify_internal_api_key` ([app/dependencies.py](app/dependencies.py)) — validates
    `X-Internal-Api-Key` against `INTERNAL_API_KEY`. This is the only thing that proves the
    caller is the trusted gateway, not a browser.
-2. `get_current_context` — parses the already-authenticated identity forwarded via
-   `X-User-Id`/`X-User-Name`/`X-User-Roles` headers, and as defense-in-depth (not solely
-   relying on the gateway's `[Authorize(Roles=...)]`) rejects any request whose roles don't
-   include Manager or Admin.
+2. An identity dependency that parses `X-User-Id`/`X-User-Name`/`X-User-Roles` into a
+   `RequestContext`. `/chat` and `/summary` use `get_current_context`, which as defense-in-depth
+   (not solely relying on the gateway's `[Authorize(Roles=...)]`) rejects any request whose
+   roles don't include Manager or Admin. `/help` uses `get_any_role_context` instead — it's
+   static how-to content with no DB access, so every authenticated role may call it; the
+   parsed roles are used only to pick which knowledge-base files to show, not to gate access.
 
 **Layering**: `routers/` (HTTP I/O, Pydantic request/response models in `schemas/`) →
 `services/llm.py` (OpenAI tool-calling loop) → `services/tools.py` (tool schemas + dispatch) →
@@ -75,3 +79,12 @@ fast on first access if a required value is missing — mirrors `team-management
 [app/repositories/reports_repository.py](app/repositories/reports_repository.py). Tools must
 stay read-only and raise `ToolExecutionError` (not a generic exception) for invalid input so the
 loop reports it back to the model instead of failing the whole request.
+
+**Help assistant / knowledge base** (`routers/help.py` → `services/help.py` +
+`services/knowledge_base.py`): a separate, non-agentic feature — one `chat.completions.create`
+call, no tools, no DB. `knowledge_base.py` reads markdown from `app/knowledge_base/` (`common.md`
+plus a file per role in `ROLE_FILES`) and combines the files matching the caller's roles;
+`help.py`'s system prompt embeds that combined text and instructs the model to answer only from
+it. To add help content for a role, edit/add the corresponding markdown file — no code change
+needed (files are cached per-process via `lru_cache`, so restart to pick up edits). The actual
+chat widget UI is a separate frontend concern, not implemented in this repo.
