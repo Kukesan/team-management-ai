@@ -98,7 +98,9 @@ async def get_reports(
             u."FullName" AS user_name,
             p."Id" AS project_id,
             p."Name" AS project_name,
+            r."Notes" AS notes,
             COALESCE(tasks.tasks, '[]'::json) AS tasks,
+            COALESCE(next_week_tasks.next_week_tasks, '[]'::json) AS next_week_tasks,
             COALESCE(blockers.blockers, '[]'::json) AS blockers,
             COALESCE(achievements.achievements, '[]'::json) AS achievements,
             COALESCE(hours.hours, '[]'::json) AS hours
@@ -118,6 +120,10 @@ async def get_reports(
             )) AS tasks
             FROM "ReportTaskItems" t WHERE t."ReportId" = r."Id"
         ) tasks ON true
+        LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object('description', n."Description")) AS next_week_tasks
+            FROM "ReportNextWeekTasks" n WHERE n."ReportId" = r."Id"
+        ) next_week_tasks ON true
         LEFT JOIN LATERAL (
             SELECT json_agg(json_build_object(
                 'description', b."Description",
@@ -144,6 +150,10 @@ async def get_reports(
           AND ($3::uuid IS NULL OR r."ProjectId" = $3)
           AND ($4::uuid IS NULL OR r."UserId" = $4)
           AND ($5::text IS NULL OR r."Status" = $5)
+          -- "Draft -- only visible to them" (spec Sec3): /chat and /summary are Manager/Admin
+          -- tools, so a still-private draft must never reach the model, regardless of the
+          -- `status` filter the model itself requested.
+          AND r."Status" != 'Draft'
         ORDER BY r."WeekStartDate" DESC, u."FullName"
         LIMIT $6
         """,

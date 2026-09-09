@@ -42,10 +42,11 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_reports",
-            "description": "Fetch weekly reports (with their full tasks completed, blockers, "
-            "achievements, and hours breakdown) in a date range. Use this to answer questions "
-            "about what someone worked on, what blockers/achievements were reported, task status "
-            "or completion percentages, or time spent on specific tasks.",
+            "description": "Fetch weekly reports (with their full tasks completed, tasks planned "
+            "for next week, blockers, achievements, hours breakdown, and any free-text notes) in "
+            "a date range. Use this to answer questions about what someone worked on or plans to "
+            "work on next, what blockers/achievements were reported, task status or completion "
+            "percentages, or time spent on specific tasks.",
             "parameters": {
                 "type": "object",
                 "properties": {
