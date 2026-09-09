@@ -1,9 +1,14 @@
-from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, InternalServerError, RateLimitError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 
 MAX_TOKENS = 1024
+
+# See services/llm.py for the reasoning behind these values -- kept identical here so
+# /chat, /summary, and /help all fail within the same bounded budget.
+_REQUEST_TIMEOUT_SECONDS = 20.0
+_RETRYABLE_ERRORS = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
 HELP_SYSTEM_PROMPT = """You are an in-app help assistant for this team management app, \
 answering "how do I..." questions about using the product itself (navigation, \
@@ -26,10 +31,15 @@ Documentation:
 
 
 def _client() -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=get_settings().openai_api_key)
+    return AsyncOpenAI(api_key=get_settings().openai_api_key, timeout=_REQUEST_TIMEOUT_SECONDS)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(_RETRYABLE_ERRORS),
+    reraise=True,
+)
 async def _create_completion(client: AsyncOpenAI, **kwargs):
     return await client.chat.completions.create(**kwargs)
 

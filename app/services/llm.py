@@ -2,8 +2,8 @@ import json
 import logging
 from datetime import date
 
-from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, InternalServerError, RateLimitError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 from app.core.errors import ToolExecutionError
@@ -12,6 +12,18 @@ from app.services.tools import TOOL_SCHEMAS, execute_tool
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 1536
+
+# Per-call budget for a single OpenAI request. Deliberately well under the SDK's 600s
+# default and under team-management-api's outbound HttpClient.Timeout (see Program.cs) --
+# a call that hangs this long is failing, not slow, so give up and let the retry/tool-loop
+# logic below (or the caller) handle it rather than tying up the request indefinitely.
+_REQUEST_TIMEOUT_SECONDS = 20.0
+
+# Only retry errors that are plausibly transient (dropped connection, our own timeout above,
+# rate limiting, a 5xx from OpenAI). A 4xx like BadRequestError/AuthenticationError will
+# never succeed on retry, so failing immediately avoids burning the tool loop's iteration
+# budget on a request that cannot work.
+_RETRYABLE_ERRORS = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
 CHAT_SYSTEM_PROMPT = """You are an AI assistant embedded in a team weekly-report \
 dashboard, answering a manager's questions about their team's activity. Today's \
@@ -39,10 +51,15 @@ provided data; do not fabricate details."""
 
 
 def _client() -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=get_settings().openai_api_key)
+    return AsyncOpenAI(api_key=get_settings().openai_api_key, timeout=_REQUEST_TIMEOUT_SECONDS)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(_RETRYABLE_ERRORS),
+    reraise=True,
+)
 async def _create_completion(client: AsyncOpenAI, **kwargs):
     return await client.chat.completions.create(**kwargs)
 
